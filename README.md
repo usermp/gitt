@@ -39,6 +39,24 @@ gitt
 
 Follow the prompts to select files, choose a commit type, and enter your commit message.
 
+## Commit Types
+
+| Commit Type | Description                                           |
+|-------------|-------------------------------------------------------|
+| feat        | A new feature                                        |
+| fix         | A bug fix                                           |
+| chore       | Routine tasks and maintenance                        |
+| refactor    | Code changes that do not affect functionality        |
+| docs        | Documentation changes                                |
+| style       | Formatting changes (no code change)                 |
+| test        | Adding or updating tests                             |
+| perf        | Performance improvements                              |
+| ci          | Changes related to continuous integration            |
+| build       | Changes related to the build process                 |
+| revert      | Reverting previous changes                            |
+
+This table clearly explains each commit type and its purpose.
+
 ## Acknowledgments
 
 This project was inspired by the work of [Sina Bayandorian](https://github.com/sina-byn/gitt), whose project `gitt` provided valuable insights into creating a CLI for better commit messages.
