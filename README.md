@@ -41,19 +41,20 @@ Follow the prompts to select files, choose a commit type, and enter your commit 
 
 ## Commit Types
 
-| Commit Type | Description                                           |
-|-------------|-------------------------------------------------------|
-| feat        | A new feature                                        |
-| fix         | A bug fix                                           |
-| chore       | Routine tasks and maintenance                        |
-| refactor    | Code changes that do not affect functionality        |
-| docs        | Documentation changes                                |
-| style       | Formatting changes (no code change)                 |
-| test        | Adding or updating tests                             |
-| perf        | Performance improvements                              |
-| ci          | Changes related to continuous integration            |
-| build       | Changes related to the build process                 |
-| revert      | Reverting previous changes                            |
+| Commit Type | Description                                                        |
+|-------------|--------------------------------------------------------------------|
+| no type     | No specific type selected; use when the change is minor or unclear.|
+| feat        | A new feature                                                      |
+| fix         | A bug fix                                                          |
+| chore       | Routine tasks and maintenance                                      |
+| refactor    | Code changes that do not affect functionality                      |
+| docs        | Documentation changes                                              |
+| style       | Formatting changes (no code change)                                |
+| test        | Adding or updating tests                                           |
+| perf        | Performance improvements                                           |
+| ci          | Changes related to continuous integration                          |
+| build       | Changes related to the build process                               |
+| revert      | Reverting previous changes                                         |
 
 This table clearly explains each commit type and its purpose.
 
