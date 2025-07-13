@@ -42,7 +42,7 @@ else
 fi
 
 # Select commit type
-COMMIT_TYPE=$(printf "%s\n" "${!COMMIT_TYPES[@]}" | fzf --height 40% --ansi --preview "echo ${COMMIT_TYPES[{}]}" --preview-window=up:1)
+COMMIT_TYPE=$(printf "%s\n" "${!COMMIT_TYPES[@]}" "none" "no type" | fzf --height 40% --ansi --preview "echo ${COMMIT_TYPES[{}]}" --preview-window=up:1)
 
 if [ -z "$COMMIT_TYPE" ]; then
     echo "No commit type selected."
@@ -58,5 +58,10 @@ if [ -z "$COMMIT_MESSAGE" ]; then
 fi
 
 # Format and commit
-FINAL_COMMIT_MESSAGE="[$COMMIT_TYPE] $COMMIT_MESSAGE"
+if [[ "$COMMIT_TYPE" == "none" || "$COMMIT_TYPE" == "no type" ]]; then
+    FINAL_COMMIT_MESSAGE="$COMMIT_MESSAGE"
+else
+    FINAL_COMMIT_MESSAGE="[$COMMIT_TYPE] $COMMIT_MESSAGE"
+fi
+
 git commit -m "$FINAL_COMMIT_MESSAGE"
