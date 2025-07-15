@@ -13,16 +13,11 @@ NC='\033[0m' # No Color
 
 
 # --- Update Mode ---
+
 if [[ "$1" == "--update" ]]; then
-    echo -e "${BLUE}🔄 Updating Gitt to the latest version...${NC}"
-    if [ -d .git ]; then
-        git pull
-        echo -e "${GREEN}✅ Pulled latest code from git${NC}"
-    else
-        echo -e "${RED}❌ No .git directory found. Cannot update.${NC}"
-        exit 1
-    fi
-    # Re-run the script without --update
+    echo -e "${BLUE}🔄 Updating Gitt from local folder...${NC}"
+    # Set update flag and re-run the script
+    export GITT_UPDATE_MODE=1
     exec "$0"
 fi
 
@@ -173,64 +168,84 @@ echo -e "${BLUE}📦 Installing gitt...${NC}"
 # Create installation directory if it doesn't exist
 sudo mkdir -p /usr/local/bin
 
-echo -e "${GREEN}✅ gitt CLI installed to /usr/local/bin/gitt${NC}"
-
 # Copy the main script only if source and destination differ
-if [ "$(realpath gitt.sh)" != "/usr/local/bin/gitt" ]; then
-    sudo cp gitt.sh /usr/local/bin/gitt
-    sudo chmod +x /usr/local/bin/gitt
-    echo -e "${GREEN}✅ gitt CLI installed to /usr/local/bin/gitt${NC}"
+set +e  # Temporarily disable exit on error
+if [ "$(realpath gitt.sh 2>/dev/null)" != "/usr/local/bin/gitt" ]; then
+    if sudo cp gitt.sh /usr/local/bin/gitt 2>/dev/null; then
+        sudo chmod +x /usr/local/bin/gitt
+        echo -e "${GREEN}✅ gitt CLI installed to /usr/local/bin/gitt${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Could not copy gitt.sh. It may already be installed.${NC}"
+    fi
 else
     echo -e "${YELLOW}⚠️  gitt.sh is already at /usr/local/bin/gitt. Skipping copy.${NC}"
 fi
+set -e  # Re-enable exit on error
 
-# Install GUI components if Python is available
-if [ "$PYTHON_AVAILABLE" = true ]; then
+# Install GUI components if Python is available or if in update mode
+if [ "$PYTHON_AVAILABLE" = true ] || [ "$GITT_UPDATE_MODE" = "1" ]; then
     echo -e "${BLUE}🎨 Setting up GUI components...${NC}"
     
     # Create gitt config directory
     GITT_DIR="$HOME/.config/gitt"
     mkdir -p "$GITT_DIR"
     
-    # Copy GUI files
+    # Copy GUI files (always update these during update mode)
     cp gitt_gui.py "$GITT_DIR/"
     cp requirements.txt "$GITT_DIR/"
-    cp .env.example "$GITT_DIR/"
-    cp changelog_generator.py "$GITT_DIR/"
-    
-    echo -e "${GREEN}✅ GUI components installed to $GITT_DIR${NC}"
-    
-    # Create virtual environment
-    echo -e "${BLUE}🐍 Setting up Python virtual environment...${NC}"
-    cd "$GITT_DIR"
-    python3 -m venv .venv
-    
-    # Ask user if they want to install Python dependencies
-    echo
-    read -p "$(echo -e ${BLUE}🐍 Install Python dependencies for GUI mode? [Y/n]: ${NC})" -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        echo -e "${YELLOW}⚠️  Skipping Python dependencies. GUI mode will not work until installed.${NC}"
-        echo -e "${YELLOW}   To install later: cd $GITT_DIR && .venv/bin/pip install -r requirements.txt${NC}"
-    else
-        echo -e "${BLUE}📦 Installing Python dependencies...${NC}"
-        .venv/bin/pip install --upgrade pip
-        .venv/bin/pip install -r requirements.txt
-        echo -e "${GREEN}✅ Python dependencies installed${NC}"
+    if [ -f .env.example ]; then
+        cp .env.example "$GITT_DIR/"
+    fi
+    if [ -f changelog_generator.py ]; then
+        cp changelog_generator.py "$GITT_DIR/"
     fi
     
-    # Setup API key
-    echo
-    echo -e "${BLUE}🔑 Gemini API Setup${NC}"
-    echo -e "${YELLOW}To use AI-powered commit messages, you need a Gemini API key.${NC}"
-    echo -e "${YELLOW}1. Get your API key from: https://makersuite.google.com/app/apikey${NC}"
-    echo -e "${YELLOW}2. Copy .env.example to .env in $GITT_DIR${NC}"
-    echo -e "${YELLOW}3. Add your API key to the .env file${NC}"
-    echo
-    echo -e "${BLUE}Example:${NC}"
-    echo -e "${YELLOW}cd $GITT_DIR${NC}"
-    echo -e "${YELLOW}cp .env.example .env${NC}"
-    echo -e "${YELLOW}echo 'GEMINI_API_KEY=your_actual_api_key_here' > .env${NC}"
+    echo -e "${GREEN}✅ GUI components updated in $GITT_DIR${NC}"
+    
+    # Only create virtual environment if it doesn't exist
+    if [ ! -d "$GITT_DIR/.venv" ]; then
+        echo -e "${BLUE}🐍 Setting up Python virtual environment...${NC}"
+        cd "$GITT_DIR"
+        python3 -m venv .venv
+    fi
+    
+    # Ask user if they want to install Python dependencies (skip in update mode if already installed)
+    if [ "$GITT_UPDATE_MODE" = "1" ] && [ -f "$GITT_DIR/.venv/bin/pip" ]; then
+        echo -e "${BLUE}📦 Updating Python dependencies...${NC}"
+        cd "$GITT_DIR"
+        .venv/bin/pip install --upgrade pip
+        .venv/bin/pip install -r requirements.txt
+        echo -e "${GREEN}✅ Python dependencies updated${NC}"
+    elif [ "$GITT_UPDATE_MODE" != "1" ]; then
+        echo
+        read -p "$(echo -e ${BLUE}🐍 Install Python dependencies for GUI mode? [Y/n]: ${NC})" -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}⚠️  Skipping Python dependencies. GUI mode will not work until installed.${NC}"
+            echo -e "${YELLOW}   To install later: cd $GITT_DIR && .venv/bin/pip install -r requirements.txt${NC}"
+        else
+            echo -e "${BLUE}📦 Installing Python dependencies...${NC}"
+            cd "$GITT_DIR"
+            .venv/bin/pip install --upgrade pip
+            .venv/bin/pip install -r requirements.txt
+            echo -e "${GREEN}✅ Python dependencies installed${NC}"
+        fi
+    fi
+    
+    # Setup API key (skip in update mode if .env already exists)
+    if [ "$GITT_UPDATE_MODE" != "1" ] || [ ! -f "$GITT_DIR/.env" ]; then
+        echo
+        echo -e "${BLUE}🔑 Gemini API Setup${NC}"
+        echo -e "${YELLOW}To use AI-powered commit messages, you need a Gemini API key.${NC}"
+        echo -e "${YELLOW}1. Get your API key from: https://makersuite.google.com/app/apikey${NC}"
+        echo -e "${YELLOW}2. Copy .env.example to .env in $GITT_DIR${NC}"
+        echo -e "${YELLOW}3. Add your API key to the .env file${NC}"
+        echo
+        echo -e "${BLUE}Example:${NC}"
+        echo -e "${YELLOW}cd $GITT_DIR${NC}"
+        echo -e "${YELLOW}cp .env.example .env${NC}"
+        echo -e "${YELLOW}echo 'GEMINI_API_KEY=your_actual_api_key_here' > .env${NC}"
+    fi
 fi
 
 # Create a simple test to verify installation
@@ -271,10 +286,3 @@ fi
 
 echo
 echo -e "${BLUE}🚀 You can now use 'gitt' from anywhere in your terminal!${NC}"
-    echo "gitt has been installed to $TARGET_DIR."
-    echo "You can run it by typing 'gitt' in your terminal."
-}
-
-# Main script execution
-check_dependencies
-install_script

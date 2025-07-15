@@ -39,7 +39,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/gitt.git
+git clone https://github.com/usermp/gitt.git
 cd gitt
 
 # Make installer executable and run
