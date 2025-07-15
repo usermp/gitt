@@ -1117,8 +1117,11 @@ def main():
         
         if branch_info:
             df_branches = pd.DataFrame(branch_info)
-            # Make datetime objects timezone-naive for consistent calculations
-            df_branches['last_commit_date'] = pd.to_datetime(df_branches['last_commit_date']).dt.tz_localize(None)
+            # Ensure datetime objects are timezone-naive for consistent calculations
+            df_branches['last_commit_date'] = pd.to_datetime(df_branches['last_commit_date'])
+            # Remove timezone info if present
+            if df_branches['last_commit_date'].dt.tz is not None:
+                df_branches['last_commit_date'] = df_branches['last_commit_date'].dt.tz_localize(None)
             df_branches['days_since_last_commit'] = (
                 pd.Timestamp.now() - df_branches['last_commit_date']
             ).dt.days
