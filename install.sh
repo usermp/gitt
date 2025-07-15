@@ -11,6 +11,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+
+# --- Update Mode ---
+if [[ "$1" == "--update" ]]; then
+    echo -e "${BLUE}🔄 Updating Gitt to the latest version...${NC}"
+    if [ -d .git ]; then
+        git pull
+        echo -e "${GREEN}✅ Pulled latest code from git${NC}"
+    else
+        echo -e "${RED}❌ No .git directory found. Cannot update.${NC}"
+        exit 1
+    fi
+    # Re-run the script without --update
+    exec "$0"
+fi
+
 echo -e "${BLUE}🚀 Installing Gitt - Enhanced Git Commit Helper${NC}"
 echo
 
@@ -158,11 +173,16 @@ echo -e "${BLUE}📦 Installing gitt...${NC}"
 # Create installation directory if it doesn't exist
 sudo mkdir -p /usr/local/bin
 
-# Copy the main script
-sudo cp gitt.sh /usr/local/bin/gitt
-sudo chmod +x /usr/local/bin/gitt
-
 echo -e "${GREEN}✅ gitt CLI installed to /usr/local/bin/gitt${NC}"
+
+# Copy the main script only if source and destination differ
+if [ "$(realpath gitt.sh)" != "/usr/local/bin/gitt" ]; then
+    sudo cp gitt.sh /usr/local/bin/gitt
+    sudo chmod +x /usr/local/bin/gitt
+    echo -e "${GREEN}✅ gitt CLI installed to /usr/local/bin/gitt${NC}"
+else
+    echo -e "${YELLOW}⚠️  gitt.sh is already at /usr/local/bin/gitt. Skipping copy.${NC}"
+fi
 
 # Install GUI components if Python is available
 if [ "$PYTHON_AVAILABLE" = true ]; then

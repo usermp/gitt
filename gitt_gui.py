@@ -277,29 +277,165 @@ def main():
     st.title("🚀 Gitt - Smart Git Commit Helper")
     st.markdown("A modern GUI for better git commits with AI-powered commit messages")
     
-    # Show current working directory
-    current_dir = os.getcwd()
+    # --- Select Git Project Directory ---
+    st.sidebar.header("Select Git Project Directory")
+    import glob
+    import pathlib
+    # List subdirectories in home and current dir for quick selection
+    home = str(pathlib.Path.home())
+    cwd = os.getcwd()
+    quick_dirs = [cwd, home] + glob.glob(f"{home}/*/")
+    quick_dirs = [d for d in quick_dirs if os.path.isdir(d)]
+    default_dir = st.session_state.get("selected_git_dir", cwd)
+    selected_git_dir = st.sidebar.selectbox(
+        "Quick Select Directory", quick_dirs, index=quick_dirs.index(default_dir) if default_dir in quick_dirs else 0
+    )
+    custom_dir = st.sidebar.text_input(
+        "Or enter custom path", value=selected_git_dir, help="Enter or paste the path to your git project directory"
+    )
+    if st.sidebar.button("Set Project Directory"):
+        if os.path.isdir(custom_dir):
+            st.session_state.selected_git_dir = custom_dir
+            st.success(f"Project directory set to: {custom_dir}")
+        else:
+            st.error("❌ Invalid directory. Please select a valid path.")
+    current_dir = st.session_state.get("selected_git_dir", cwd)
     st.caption(f"📂 Working directory: `{current_dir}`")
     
-    git_helper = GitHelper()
+    # Helper to run git commands in selected directory
+    class GitHelperWithPath(GitHelper):
+        def _run(self, cmd, **kwargs):
+            return subprocess.run(cmd, cwd=current_dir, **kwargs)
+        def is_git_repository(self):
+            try:
+                self._run(['git', 'rev-parse', '--git-dir'], capture_output=True, check=True)
+                return True
+            except subprocess.CalledProcessError:
+                return False
+        def get_git_status(self):
+            try:
+                result = self._run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True)
+                files = []
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        status = line[:2]
+                        filename = line[3:]
+                        files.append({"status": status, "filename": filename})
+                return files
+            except subprocess.CalledProcessError:
+                return []
+        def get_git_diff(self, files=None):
+            try:
+                cmd = ['git', 'diff', '--cached']
+                if files and files != ["."]:
+                    cmd.append('--')
+                    cmd.extend(files)
+                result = self._run(cmd, capture_output=True, text=True, check=True)
+                if not result.stdout:
+                    cmd = ['git', 'diff']
+                    if files and files != ["."]:
+                        cmd.append('--')
+                        cmd.extend(files)
+                    result = self._run(cmd, capture_output=True, text=True, check=True)
+                return result.stdout
+            except subprocess.CalledProcessError:
+                return ""
+        def get_file_stats(self, files=None):
+            try:
+                cmd = ['git', 'diff', '--stat', '--cached']
+                if files and files != ["."]:
+                    cmd.append('--')
+                    cmd.extend(files)
+                result = self._run(cmd, capture_output=True, text=True, check=True)
+                if not result.stdout:
+                    cmd = ['git', 'diff', '--stat']
+                    if files and files != ["."]:
+                        cmd.append('--')
+                        cmd.extend(files)
+                    result = self._run(cmd, capture_output=True, text=True, check=True)
+                return result.stdout
+            except subprocess.CalledProcessError:
+                return ""
+        def get_file_changes_summary(self, files=None):
+            try:
+                file_changes = {}
+                cmd = ['git', 'status', '--porcelain']
+                result = self._run(cmd, capture_output=True, text=True, check=True)
+                if files and files != ["."]:
+                    all_files = []
+                    for line in result.stdout.strip().split('\n'):
+                        if line.strip():
+                            filename = line[3:]
+                            if filename in files:
+                                all_files.append(line)
+                    status_output = '\n'.join(all_files)
+                else:
+                    status_output = result.stdout
+                for line in status_output.strip().split('\n'):
+                    if line.strip():
+                        status = line[:2]
+                        filename = line[3:]
+                        change_type = "Changed"
+                        if status == "A ":
+                            change_type = "Added"
+                        elif status == "M " or status == " M":
+                            change_type = "Modified"
+                        elif status == "D ":
+                            change_type = "Deleted"
+                        elif status == "R ":
+                            change_type = "Renamed"
+                        elif status == "??":
+                            change_type = "New file"
+                        file_diff = ""
+                        try:
+                            if status.strip() and status[0] != '?':
+                                file_diff_cmd = ['git', 'diff', '--cached', '--', filename]
+                                file_diff_result = self._run(file_diff_cmd, capture_output=True, text=True)
+                                if file_diff_result.returncode == 0 and file_diff_result.stdout:
+                                    file_diff = file_diff_result.stdout
+                                else:
+                                    file_diff_cmd = ['git', 'diff', '--', filename]
+                                    file_diff_result = self._run(file_diff_cmd, capture_output=True, text=True)
+                                    if file_diff_result.returncode == 0:
+                                        file_diff = file_diff_result.stdout
+                        except Exception as e:
+                            file_diff = f"(Error getting diff: {str(e)})"
+                        file_changes[filename] = {"type": change_type, "diff": file_diff}
+                return file_changes
+            except subprocess.CalledProcessError:
+                return {}
+        def get_recent_commits_context(self, limit=5):
+            try:
+                cmd = ['git', 'log', '--oneline', f'-{limit}']
+                result = self._run(cmd, capture_output=True, text=True, check=True)
+                return result.stdout.strip()
+            except subprocess.CalledProcessError:
+                return ""
+        def add_files(self, files):
+            try:
+                if files == ["."]:
+                    self._run(['git', 'add', '.'], check=True)
+                else:
+                    self._run(['git', 'add'] + files, check=True)
+                return True
+            except subprocess.CalledProcessError:
+                return False
+        def commit(self, message):
+            try:
+                self._run(['git', 'commit', '-m', message], check=True)
+                return True
+            except subprocess.CalledProcessError:
+                return False
+        def generate_commit_message(self, diff_content, commit_type=None, selected_files=None):
+            return super().generate_commit_message(diff_content, commit_type, selected_files)
+    
+    git_helper = GitHelperWithPath()
     
     # Check if we're in a git repository
     if not git_helper.is_git_repository():
-        st.error("❌ Not in a git repository. Please navigate to a git repository first.")
-        st.info("💡 Make sure you're running this from within a git repository directory.")
-        
-        # Show current working directory for debugging
-        current_dir = os.getcwd()
+        st.error("❌ Not in a git repository. Please select a valid git project directory from the sidebar.")
+        st.info("💡 Make sure your selected directory contains a .git folder.")
         st.code(f"Current directory: {current_dir}")
-        
-        # Show git status to help debug
-        try:
-            result = subprocess.run(['git', 'status'], capture_output=True, text=True)
-            if result.returncode != 0:
-                st.error(f"Git error: {result.stderr}")
-        except Exception as e:
-            st.error(f"Git command failed: {e}")
-        
         return
     
     # Check API key configuration
