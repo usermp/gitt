@@ -2,6 +2,13 @@ import streamlit as st
 import subprocess
 import os
 import json
+import logging
+import datetime
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from collections import defaultdict, Counter
+import re
 
 # Load environment variables
 try:
@@ -19,6 +26,17 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.expanduser('~/.config/gitt/gitt.log')),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('gitt')
 
 class GitHelper:
     def __init__(self):
@@ -183,21 +201,27 @@ class GitHelper:
     
     def add_files(self, files):
         """Add files to git staging area"""
+        logger.info(f"Adding files to staging: {files}")
         try:
             if files == ["."]:
                 subprocess.run(['git', 'add', '.'], check=True)
             else:
                 subprocess.run(['git', 'add'] + files, check=True)
+            logger.info("Files added successfully")
             return True
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to add files: {e}")
             return False
     
     def commit(self, message):
         """Create git commit with message"""
+        logger.info(f"Creating commit with message: {message[:50]}...")
         try:
             subprocess.run(['git', 'commit', '-m', message], check=True)
+            logger.info("Commit created successfully")
             return True
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to create commit: {e}")
             return False
     
     def generate_commit_message(self, diff_content, commit_type=None, selected_files=None):
@@ -266,6 +290,232 @@ class GitHelper:
             return response.text.strip()
         except Exception as e:
             return f"Error generating message: {str(e)}"
+    
+    def get_git_metadata(self):
+        """Get comprehensive git repository metadata"""
+        logger.info("Fetching git metadata")
+        try:
+            metadata = {}
+            
+            # Repository info
+            metadata['repo_path'] = subprocess.run(
+                ['git', 'rev-parse', '--show-toplevel'], 
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+            
+            # Current branch
+            metadata['current_branch'] = subprocess.run(
+                ['git', 'branch', '--show-current'], 
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+            
+            # All branches
+            branches_result = subprocess.run(
+                ['git', 'branch', '-a'], 
+                capture_output=True, text=True, check=True
+            )
+            metadata['branches'] = [b.strip().lstrip('* ') for b in branches_result.stdout.split('\n') if b.strip()]
+            
+            # Remote info
+            try:
+                remote_url = subprocess.run(
+                    ['git', 'remote', 'get-url', 'origin'], 
+                    capture_output=True, text=True, check=True
+                ).stdout.strip()
+                metadata['remote_url'] = remote_url
+            except:
+                metadata['remote_url'] = None
+            
+            # Repository size
+            try:
+                size_result = subprocess.run(
+                    ['du', '-sh', '.git'], 
+                    capture_output=True, text=True, check=True
+                )
+                metadata['repo_size'] = size_result.stdout.split('\t')[0]
+            except:
+                metadata['repo_size'] = 'Unknown'
+            
+            logger.info("Git metadata fetched successfully")
+            return metadata
+        except Exception as e:
+            logger.error(f"Error fetching git metadata: {e}")
+            return {}
+    
+    def get_commit_history(self, limit=100):
+        """Get detailed commit history for analysis"""
+        logger.info(f"Fetching commit history (limit: {limit})")
+        try:
+            # Get commit data with detailed format
+            result = subprocess.run([
+                'git', 'log', f'-{limit}', 
+                '--pretty=format:%H|%an|%ae|%ad|%s|%b', 
+                '--date=iso'
+            ], capture_output=True, text=True, check=True)
+            
+            commits = []
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.split('|', 5)
+                    if len(parts) >= 5:
+                        commit_hash, author, email, date, subject = parts[:5]
+                        body = parts[5] if len(parts) > 5 else ""
+                        
+                        # Parse commit type from subject
+                        commit_type = "other"
+                        if subject.startswith('['):
+                            type_match = re.match(r'\[([^\]]+)\]', subject)
+                            if type_match:
+                                commit_type = type_match.group(1).lower()
+                        
+                        # Parse date and make it timezone-naive
+                        try:
+                            parsed_date = datetime.datetime.fromisoformat(date.replace(' ', 'T'))
+                            if parsed_date.tzinfo is not None:
+                                parsed_date = parsed_date.replace(tzinfo=None)
+                        except:
+                            parsed_date = datetime.datetime.now()
+                        
+                        commits.append({
+                            'hash': commit_hash,
+                            'author': author,
+                            'email': email,
+                            'date': parsed_date,
+                            'subject': subject,
+                            'body': body,
+                            'type': commit_type
+                        })
+            
+            logger.info(f"Fetched {len(commits)} commits")
+            return commits
+        except Exception as e:
+            logger.error(f"Error fetching commit history: {e}")
+            return []
+    
+    def get_author_stats(self):
+        """Get author contribution statistics"""
+        logger.info("Fetching author statistics")
+        try:
+            # Get author commit counts
+            result = subprocess.run([
+                'git', 'shortlog', '-sn', '--all'
+            ], capture_output=True, text=True, check=True)
+            
+            author_stats = []
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.strip().split('\t', 1)
+                    if len(parts) == 2:
+                        count, author = parts
+                        author_stats.append({
+                            'author': author,
+                            'commits': int(count)
+                        })
+            
+            # Get lines added/removed by author
+            for stat in author_stats:
+                try:
+                    lines_result = subprocess.run([
+                        'git', 'log', '--author=' + stat['author'], 
+                        '--pretty=tformat:', '--numstat'
+                    ], capture_output=True, text=True, check=True)
+                    
+                    added, removed = 0, 0
+                    for line in lines_result.stdout.strip().split('\n'):
+                        if line.strip() and '\t' in line:
+                            parts = line.split('\t')
+                            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                                added += int(parts[0])
+                                removed += int(parts[1])
+                    
+                    stat['lines_added'] = added
+                    stat['lines_removed'] = removed
+                except:
+                    stat['lines_added'] = 0
+                    stat['lines_removed'] = 0
+            
+            logger.info(f"Author stats for {len(author_stats)} authors")
+            return author_stats
+        except Exception as e:
+            logger.error(f"Error fetching author stats: {e}")
+            return []
+    
+    def get_file_change_stats(self):
+        """Get file change frequency statistics"""
+        logger.info("Fetching file change statistics")
+        try:
+            result = subprocess.run([
+                'git', 'log', '--name-only', '--pretty=format:'
+            ], capture_output=True, text=True, check=True)
+            
+            file_changes = Counter()
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    file_changes[line.strip()] += 1
+            
+            # Get current file sizes
+            file_stats = []
+            for filename, changes in file_changes.most_common(20):  # Top 20
+                try:
+                    if os.path.exists(filename):
+                        size = os.path.getsize(filename)
+                        file_stats.append({
+                            'filename': filename,
+                            'changes': changes,
+                            'size_bytes': size
+                        })
+                except:
+                    file_stats.append({
+                        'filename': filename,
+                        'changes': changes,
+                        'size_bytes': 0
+                    })
+            
+            logger.info(f"File stats for {len(file_stats)} files")
+            return file_stats
+        except Exception as e:
+            logger.error(f"Error fetching file change stats: {e}")
+            return []
+    
+    def get_branch_info(self):
+        """Get detailed branch information"""
+        logger.info("Fetching branch information")
+        try:
+            branch_info = []
+            
+            # Get all branches with last commit info
+            result = subprocess.run([
+                'git', 'for-each-ref', 
+                '--format=%(refname:short)|%(committerdate:iso)|%(authorname)|%(subject)',
+                'refs/heads/', 'refs/remotes/'
+            ], capture_output=True, text=True, check=True)
+            
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.split('|', 3)
+                    if len(parts) >= 4:
+                        branch, date, author, subject = parts
+                        # Parse date and make it timezone-naive
+                        try:
+                            parsed_date = datetime.datetime.fromisoformat(date.replace(' ', 'T'))
+                            if parsed_date.tzinfo is not None:
+                                parsed_date = parsed_date.replace(tzinfo=None)
+                        except:
+                            parsed_date = datetime.datetime.now()
+                        
+                        branch_info.append({
+                            'name': branch,
+                            'last_commit_date': parsed_date,
+                            'last_author': author,
+                            'last_subject': subject,
+                            'is_remote': branch.startswith('origin/')
+                        })
+            
+            logger.info(f"Branch info for {len(branch_info)} branches")
+            return branch_info
+        except Exception as e:
+            logger.error(f"Error fetching branch info: {e}")
+            return []
 
 def main():
     st.set_page_config(
@@ -505,15 +755,19 @@ def main():
                         del st.session_state.api_key_configured
                     st.rerun()
     
-    # Get git status
-    files = git_helper.get_git_status()
+    # Create tabs for different views
+    tab1, tab2, tab3 = st.tabs(["💻 Commit", "📊 Analytics", "📋 Logs"])
     
-    if not files:
-        st.info("✅ No changes detected in the repository.")
-        return
-    
-    # Display current changes
-    st.subheader("📁 Changed Files")
+    with tab1:
+        # Get git status
+        files = git_helper.get_git_status()
+        
+        if not files:
+            st.info("✅ No changes detected in the repository.")
+            return
+        
+        # Display current changes
+        st.subheader("📁 Changed Files")
     
     # Create columns for layout
     col1, col2 = st.columns([1, 1])
@@ -714,6 +968,245 @@ def main():
             if recent_commits:
                 st.markdown("**Recent Commits (for context):**")
                 st.code(recent_commits, language="text")
+    
+        # Show advanced git metadata
+        if st.checkbox("🔍 Show Git Metadata", help="View detailed information about the git repository"):
+            with st.expander("Git Repository Metadata", expanded=True):
+                metadata = git_helper.get_git_metadata()
+                if metadata:
+                    st.json(metadata)
+                else:
+                    st.info("No metadata available")
+            
+            with st.expander("Commit History", expanded=False):
+                commit_history = git_helper.get_commit_history(limit=10)
+                if commit_history:
+                    for commit in commit_history:
+                        st.markdown(f"- **{commit['subject']}** (by {commit['author']})")
+                        st.markdown(f"  `{commit['date']}` - {commit['hash']}")
+                else:
+                    st.info("No commit history available")
+            
+            with st.expander("Author Statistics", expanded=False):
+                author_stats = git_helper.get_author_stats()
+                if author_stats:
+                    st.write(f"Total authors: {len(author_stats)}")
+                    for stat in author_stats:
+                        st.markdown(f"- {stat['author']}: {stat['commits']} commits, {stat.get('lines_added', 0)} lines added, {stat.get('lines_removed', 0)} lines removed")
+                else:
+                    st.info("No author statistics available")
+            
+            with st.expander("File Change Statistics", expanded=False):
+                file_change_stats = git_helper.get_file_change_stats()
+                if file_change_stats:
+                    st.write(f"Top {len(file_change_stats)} files by change frequency:")
+                    for stat in file_change_stats:
+                        st.markdown(f"- {stat['filename']}: {stat['changes']} changes, {stat['size_bytes']} bytes")
+                else:
+                    st.info("No file change statistics available")
+            
+            with st.expander("Branch Information", expanded=False):
+                branch_info = git_helper.get_branch_info()
+                if branch_info:
+                    for branch in branch_info:
+                        st.markdown(f"- **{branch['name']}**: Last commit by {branch['last_author']} on {branch['last_commit_date']}")
+                else:
+                    st.info("No branch information available")
+    
+    with tab2:
+        st.header("📊 Repository Analytics")
+        logger.info("Analytics tab accessed")
+        
+        # Repository metadata
+        metadata = git_helper.get_git_metadata()
+        if metadata:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Current Branch", metadata.get('current_branch', 'Unknown'))
+            with col2:
+                st.metric("Repository Size", metadata.get('repo_size', 'Unknown'))
+            with col3:
+                st.metric("Total Branches", len(metadata.get('branches', [])))
+            with col4:
+                if metadata.get('remote_url'):
+                    st.metric("Remote", "Connected")
+                else:
+                    st.metric("Remote", "None")
+        
+        # Commit history analysis
+        st.subheader("📈 Commit Analysis")
+        commits = git_helper.get_commit_history(50)
+        
+        if commits:
+            # Create DataFrame for analysis
+            df_commits = pd.DataFrame(commits)
+            df_commits['date_only'] = df_commits['date'].dt.date
+            
+            # Commits over time
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Commits Over Time**")
+                daily_commits = df_commits.groupby('date_only').size().reset_index(name='count')
+                fig_timeline = px.line(daily_commits, x='date_only', y='count', 
+                                     title="Daily Commit Activity")
+                st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            with col2:
+                st.markdown("**Commit Types Distribution**")
+                type_counts = df_commits['type'].value_counts()
+                fig_types = px.pie(values=type_counts.values, names=type_counts.index,
+                                 title="Commit Types")
+                st.plotly_chart(fig_types, use_container_width=True)
+            
+            # Author contributions
+            st.subheader("👥 Author Contributions")
+            author_stats = git_helper.get_author_stats()
+            
+            if author_stats:
+                df_authors = pd.DataFrame(author_stats)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Commits by Author**")
+                    fig_authors = px.bar(df_authors, x='author', y='commits',
+                                       title="Number of Commits per Author")
+                    fig_authors.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig_authors, use_container_width=True)
+                
+                with col2:
+                    st.markdown("**Lines Changed by Author**")
+                    df_authors['total_lines'] = df_authors['lines_added'] + df_authors['lines_removed']
+                    fig_lines = px.bar(df_authors, x='author', y=['lines_added', 'lines_removed'],
+                                     title="Lines Added/Removed per Author")
+                    fig_lines.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig_lines, use_container_width=True)
+                
+                # Author stats table
+                st.markdown("**Detailed Author Statistics**")
+                st.dataframe(df_authors)
+            
+            # File change frequency
+            st.subheader("📁 File Activity")
+            file_stats = git_helper.get_file_change_stats()
+            
+            if file_stats:
+                df_files = pd.DataFrame(file_stats)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Most Changed Files**")
+                    fig_files = px.bar(df_files.head(10), x='changes', y='filename',
+                                     title="Files with Most Changes", orientation='h')
+                    st.plotly_chart(fig_files, use_container_width=True)
+                
+                with col2:
+                    st.markdown("**File Size vs Changes**")
+                    fig_scatter = px.scatter(df_files, x='size_bytes', y='changes',
+                                           hover_data=['filename'],
+                                           title="File Size vs Change Frequency")
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("No commit history available for analysis")
+        
+        # Branch analysis
+        st.subheader("🌿 Branch Activity")
+        branch_info = git_helper.get_branch_info()
+        
+        if branch_info:
+            df_branches = pd.DataFrame(branch_info)
+            # Make datetime objects timezone-naive for consistent calculations
+            df_branches['last_commit_date'] = pd.to_datetime(df_branches['last_commit_date']).dt.tz_localize(None)
+            df_branches['days_since_last_commit'] = (
+                pd.Timestamp.now() - df_branches['last_commit_date']
+            ).dt.days
+            
+            # Filter out very old branches for readability
+            recent_branches = df_branches[df_branches['days_since_last_commit'] <= 365]
+            
+            if not recent_branches.empty:
+                fig_branches = px.bar(recent_branches, x='name', y='days_since_last_commit',
+                                    title="Days Since Last Commit per Branch",
+                                    color='is_remote',
+                                    color_discrete_map={True: 'lightblue', False: 'darkblue'})
+                fig_branches.update_xaxes(tickangle=45)
+                st.plotly_chart(fig_branches, use_container_width=True)
+                
+                st.markdown("**Branch Details**")
+                st.dataframe(df_branches[['name', 'last_author', 'last_commit_date', 'last_subject']])
+        else:
+            st.info("No branch information available")
+    
+    with tab3:
+        st.header("📋 Activity Logs")
+        logger.info("Logs tab accessed")
+        
+        # Log file display
+        log_file = os.path.expanduser('~/.config/gitt/gitt.log')
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader("Recent Activity")
+        with col2:
+            if st.button("🔄 Refresh Logs"):
+                st.rerun()
+        
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r') as f:
+                    logs = f.readlines()
+                
+                # Show last 100 log lines
+                recent_logs = logs[-100:] if len(logs) > 100 else logs
+                
+                # Filter by log level
+                log_level = st.selectbox("Filter by level:", ["All", "INFO", "WARNING", "ERROR"])
+                
+                filtered_logs = []
+                for log in recent_logs:
+                    if log_level == "All" or log_level in log:
+                        filtered_logs.append(log)
+                
+                if filtered_logs:
+                    log_text = ''.join(filtered_logs)
+                    st.code(log_text, language="text")
+                else:
+                    st.info("No logs match the selected filter")
+                
+                # Log statistics
+                st.subheader("📊 Log Statistics")
+                col1, col2, col3, col4 = st.columns(4)
+                
+                total_logs = len(recent_logs)
+                info_logs = len([l for l in recent_logs if "INFO" in l])
+                warning_logs = len([l for l in recent_logs if "WARNING" in l])
+                error_logs = len([l for l in recent_logs if "ERROR" in l])
+                
+                with col1:
+                    st.metric("Total Logs", total_logs)
+                with col2:
+                    st.metric("Info", info_logs)
+                with col3:
+                    st.metric("Warnings", warning_logs, delta=warning_logs if warning_logs > 0 else None)
+                with col4:
+                    st.metric("Errors", error_logs, delta=error_logs if error_logs > 0 else None)
+                
+            except Exception as e:
+                st.error(f"Error reading log file: {e}")
+        else:
+            st.info("No log file found. Logs will appear here as you use the application.")
+            
+        # Clear logs option
+        if st.button("🗑️ Clear Logs", type="secondary"):
+            try:
+                with open(log_file, 'w') as f:
+                    f.write("")
+                st.success("Logs cleared successfully")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error clearing logs: {e}")
 
 if __name__ == "__main__":
     main()

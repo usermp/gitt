@@ -1,3 +1,5 @@
 streamlit
 google-generativeai
 python-dotenv
+plotly
+pandas
