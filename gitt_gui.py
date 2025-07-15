@@ -209,17 +209,12 @@ class GitHelper:
             return "No Gemini API key configured"
         
         try:
-            # Use faster model and configure timeout
             model = genai.GenerativeModel('gemini-1.5-flash')
             
-            # Limit diff content to prevent long processing times
-            if len(diff_content) > 5000:
-                diff_content = diff_content[:5000] + "\n... (truncated for performance)"
-            
-            # Get additional context for better commit messages (with limits)
+            # Get additional context for better commit messages
             file_changes = self.get_file_changes_summary(selected_files)
             file_stats = self.get_file_stats(selected_files)
-            recent_commits = self.get_recent_commits_context(3)  # Reduce to 3 commits
+            recent_commits = self.get_recent_commits_context()
             
             # Build file change summary
             change_summary = ""
@@ -234,32 +229,40 @@ class GitHelper:
                 type_context = f"\nCommit Type: {commit_type} ({self.commit_types.get(commit_type, '')})"
             
             prompt = f"""
-            Generate a concise commit message based on these git changes:
+            Generate a detailed commit message based on the following git changes. The commit message should follow this format:
+
+            [type] Brief title (under 50 characters)
+
+            Detailed description explaining what was changed and why.
+
+            For multiple files, group related changes and explain the overall impact.
+
+            Guidelines:
+            1. Title should be concise and use imperative mood (e.g., "Add", "Fix", "Update")
+            2. Don't include the commit type prefix in the title - it will be added automatically
+            3. Provide a detailed description in the body explaining:
+               - What files were changed and how
+               - The purpose of the changes
+               - Any new features or improvements added
+            4. Group related changes together
+            5. Be specific about functionality added, fixed, or improved
 
             {type_context}
 
-            File Changes: {len(file_changes)} files modified
+            File Statistics:
+            {file_stats}
             {change_summary}
 
-            Recent commits: {recent_commits}
+            Recent Commit History (for context):
+            {recent_commits}
 
-            Git diff (first 5000 chars):
+            Git Diff:
             {diff_content}
 
-            Format: Brief title (under 50 chars) + detailed description explaining what changed and why.
+            Generate a commit message that provides clear understanding of what changed:
             """
             
-            # Configure generation with timeout
-            generation_config = genai.types.GenerationConfig(
-                max_output_tokens=500,  # Limit response length
-                temperature=0.3,        # Less creative, more focused
-            )
-            
-            response = model.generate_content(
-                prompt, 
-                generation_config=generation_config,
-                request_options={"timeout": 15}  # 15 second timeout
-            )
+            response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
             return f"Error generating message: {str(e)}"
@@ -565,25 +568,18 @@ def main():
                 else:
                     st.error("❌ Gemini API key not configured")
             elif selected_files:
-                with st.spinner("🤖 Generating commit message (max 15s)..."):
+                with st.spinner("Generating detailed commit message..."):
                     # First add files to see the diff
                     temp_files = selected_files if selected_files != ["."] else None
                     if git_helper.add_files(selected_files):
                         diff_content = git_helper.get_git_diff()
                         if diff_content:
-                            try:
-                                ai_message = git_helper.generate_commit_message(
-                                    diff_content, 
-                                    git_helper.commit_types.get(commit_type) if commit_type != "none" else None,
-                                    selected_files
-                                )
-                                if ai_message and not ai_message.startswith("Error"):
-                                    st.session_state.ai_message = ai_message
-                                    st.success("✅ AI commit message generated!")
-                                else:
-                                    st.error(f"❌ {ai_message}")
-                            except Exception as e:
-                                st.error(f"❌ AI generation failed: {str(e)}")
+                            ai_message = git_helper.generate_commit_message(
+                                diff_content, 
+                                git_helper.commit_types.get(commit_type) if commit_type != "none" else None,
+                                selected_files
+                            )
+                            st.session_state.ai_message = ai_message
                         else:
                             st.warning("No diff content available for AI generation")
                     else:
