@@ -64,18 +64,120 @@ class GitHelper:
         """Get git diff for specified files or all changes"""
         try:
             cmd = ['git', 'diff', '--cached']
-            if files:
+            if files and files != ["."]:
+                cmd.append('--')
                 cmd.extend(files)
             
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             if not result.stdout:
                 # If no staged changes, get unstaged diff
                 cmd = ['git', 'diff']
-                if files:
+                if files and files != ["."]:
+                    cmd.append('--')
                     cmd.extend(files)
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             
             return result.stdout
+        except subprocess.CalledProcessError:
+            return ""
+    
+    def get_file_stats(self, files=None):
+        """Get file statistics (lines added/removed) for specified files"""
+        try:
+            cmd = ['git', 'diff', '--stat', '--cached']
+            if files and files != ["."]:
+                cmd.append('--')
+                cmd.extend(files)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            if not result.stdout:
+                # If no staged changes, get unstaged stats
+                cmd = ['git', 'diff', '--stat']
+                if files and files != ["."]:
+                    cmd.append('--')
+                    cmd.extend(files)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            return result.stdout
+        except subprocess.CalledProcessError:
+            return ""
+    
+    def get_file_changes_summary(self, files=None):
+        """Get a detailed summary of changes for each file"""
+        try:
+            file_changes = {}
+            
+            # Get list of changed files with their status
+            cmd = ['git', 'status', '--porcelain']
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            if files and files != ["."]:
+                # Filter to only specified files
+                all_files = []
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        filename = line[3:]
+                        if filename in files:
+                            all_files.append(line)
+                status_output = '\n'.join(all_files)
+            else:
+                status_output = result.stdout
+            
+            # Parse each file's changes
+            for line in status_output.strip().split('\n'):
+                if line.strip():
+                    status = line[:2]
+                    filename = line[3:]
+                    
+                    # Determine change type
+                    if status == "A ":
+                        change_type = "Added"
+                    elif status == "M " or status == " M":
+                        change_type = "Modified"
+                    elif status == "D ":
+                        change_type = "Deleted"
+                    elif status == "R ":
+                        change_type = "Renamed"
+                    elif status == "??":
+                        change_type = "New file"
+                    else:
+                        change_type = "Changed"
+                    
+                    # Get file-specific diff for new insights (with better error handling)
+                    file_diff = ""
+                    try:
+                        # Try staged changes first
+                        if status.strip() and status[0] != '?':  # Not untracked
+                            file_diff_cmd = ['git', 'diff', '--cached', '--', filename]
+                            file_diff_result = subprocess.run(file_diff_cmd, capture_output=True, text=True)
+                            if file_diff_result.returncode == 0 and file_diff_result.stdout:
+                                file_diff = file_diff_result.stdout
+                            else:
+                                # Try unstaged changes
+                                file_diff_cmd = ['git', 'diff', '--', filename]
+                                file_diff_result = subprocess.run(file_diff_cmd, capture_output=True, text=True)
+                                if file_diff_result.returncode == 0:
+                                    file_diff = file_diff_result.stdout
+                    except Exception as e:
+                        # If git diff fails, just continue without diff content
+                        file_diff = f"(Error getting diff: {str(e)})"
+                    
+                    file_changes[filename] = {
+                        "type": change_type,
+                        "diff": file_diff
+                    }
+            
+            return file_changes
+        except subprocess.CalledProcessError as e:
+            # Return empty dict on git command failure
+            return {}
+    
+    def get_recent_commits_context(self, limit=5):
+        """Get recent commit messages for context"""
+        try:
+            cmd = ['git', 'log', '--oneline', f'-{limit}']
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return result.stdout.strip()
         except subprocess.CalledProcessError:
             return ""
     
@@ -98,8 +200,8 @@ class GitHelper:
         except subprocess.CalledProcessError:
             return False
     
-    def generate_commit_message(self, diff_content, commit_type=None):
-        """Generate commit message using Gemini API"""
+    def generate_commit_message(self, diff_content, commit_type=None, selected_files=None):
+        """Generate detailed commit message using Gemini API with changelog analysis"""
         if not GEMINI_AVAILABLE:
             return "Gemini AI not available - please install google-generativeai"
         
@@ -109,21 +211,55 @@ class GitHelper:
         try:
             model = genai.GenerativeModel('gemini-1.5-flash')
             
+            # Get additional context for better commit messages
+            file_changes = self.get_file_changes_summary(selected_files)
+            file_stats = self.get_file_stats(selected_files)
+            recent_commits = self.get_recent_commits_context()
+            
+            # Build file change summary
+            change_summary = ""
+            if file_changes:
+                change_summary = "\n\nFile Changes Summary:\n"
+                for filename, info in file_changes.items():
+                    change_summary += f"- {filename}: {info['type']}\n"
+            
+            # Determine commit type context
+            type_context = ""
+            if commit_type and commit_type != "none":
+                type_context = f"\nCommit Type: {commit_type} ({self.commit_types.get(commit_type, '')})"
+            
             prompt = f"""
-            Based on the following git diff, generate a concise and descriptive commit message.
-            
-            Rules:
-            1. Keep it under 50 characters for the title
-            2. Be specific about what changed
-            3. Use imperative mood (e.g., "Add", "Fix", "Update")
-            4. Don't include the commit type prefix (e.g., [feat], [fix]) - just the message
-            
-            {f"Commit type context: {commit_type}" if commit_type else ""}
-            
-            Git diff:
+            Generate a detailed commit message based on the following git changes. The commit message should follow this format:
+
+            [type] Brief title (under 50 characters)
+
+            Detailed description explaining what was changed and why.
+
+            For multiple files, group related changes and explain the overall impact.
+
+            Guidelines:
+            1. Title should be concise and use imperative mood (e.g., "Add", "Fix", "Update")
+            2. Don't include the commit type prefix in the title - it will be added automatically
+            3. Provide a detailed description in the body explaining:
+               - What files were changed and how
+               - The purpose of the changes
+               - Any new features or improvements added
+            4. Group related changes together
+            5. Be specific about functionality added, fixed, or improved
+
+            {type_context}
+
+            File Statistics:
+            {file_stats}
+            {change_summary}
+
+            Recent Commit History (for context):
+            {recent_commits}
+
+            Git Diff:
             {diff_content}
-            
-            Generate only the commit message, nothing else:
+
+            Generate a commit message that provides clear understanding of what changed:
             """
             
             response = model.generate_content(prompt)
@@ -285,6 +421,10 @@ def main():
         
         # AI-powered commit message generation
         ai_available = GEMINI_AVAILABLE and os.getenv('GEMINI_API_KEY')
+        
+        st.markdown("**🤖 AI-Powered Commit Messages**")
+        st.info("🔍 AI analyzes file changes, diffs, and git history to generate detailed, contextual commit messages")
+        
         if st.button("🤖 Generate AI Commit Message", disabled=not ai_available):
             if not ai_available:
                 if not GEMINI_AVAILABLE:
@@ -292,7 +432,7 @@ def main():
                 else:
                     st.error("❌ Gemini API key not configured")
             elif selected_files:
-                with st.spinner("Generating commit message..."):
+                with st.spinner("Generating detailed commit message..."):
                     # First add files to see the diff
                     temp_files = selected_files if selected_files != ["."] else None
                     if git_helper.add_files(selected_files):
@@ -300,7 +440,8 @@ def main():
                         if diff_content:
                             ai_message = git_helper.generate_commit_message(
                                 diff_content, 
-                                git_helper.commit_types.get(commit_type) if commit_type != "none" else None
+                                git_helper.commit_types.get(commit_type) if commit_type != "none" else None,
+                                selected_files
                             )
                             st.session_state.ai_message = ai_message
                         else:
@@ -315,8 +456,8 @@ def main():
         commit_message = st.text_area(
             "💬 Commit Message", 
             value=default_message,
-            height=100,
-            placeholder="Enter your commit message here..."
+            height=200,
+            placeholder="Enter your commit message here...\n\nFor detailed messages, use:\n[title]\n\nDetailed description here..."
         )
     
     # Preview section
@@ -327,9 +468,28 @@ def main():
         if commit_type == "none":
             final_message = commit_message
         else:
-            final_message = f"[{commit_type}] {commit_message}"
+            # Check if the message already has a type prefix
+            if commit_message.strip().startswith('[') and ']' in commit_message:
+                final_message = commit_message
+            else:
+                final_message = f"[{commit_type}] {commit_message}"
         
+        # Display the commit message with better formatting
+        st.markdown("**Full Commit Message:**")
         st.code(final_message, language="text")
+        
+        # Show message statistics
+        lines = final_message.split('\n')
+        title_line = lines[0] if lines else ""
+        body_lines = lines[1:] if len(lines) > 1 else []
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Title Length", len(title_line), delta=f"{50-len(title_line)} chars remaining")
+        with col2:
+            st.metric("Total Lines", len(lines))
+        with col3:
+            st.metric("Body Lines", len([l for l in body_lines if l.strip()]))
         
         # Files to be committed
         if selected_files:
@@ -369,7 +529,11 @@ def main():
                     if commit_type == "none":
                         final_message = commit_message
                     else:
-                        final_message = f"[{commit_type}] {commit_message}"
+                        # Check if the message already has a type prefix
+                        if commit_message.strip().startswith('[') and ']' in commit_message:
+                            final_message = commit_message
+                        else:
+                            final_message = f"[{commit_type}] {commit_message}"
                     
                     if git_helper.commit(final_message):
                         st.success("🎉 Commit created successfully!")
@@ -394,6 +558,26 @@ def main():
             st.code(diff_content, language="diff")
         else:
             st.info("No diff available (files may need to be added first)")
+    
+    # Show file analysis for AI context
+    if selected_files and st.checkbox("📊 Show File Analysis", help="See what the AI analyzes for commit message generation"):
+        with st.expander("File Change Analysis", expanded=True):
+            file_changes = git_helper.get_file_changes_summary(selected_files)
+            file_stats = git_helper.get_file_stats(selected_files)
+            
+            if file_changes:
+                st.markdown("**File Changes:**")
+                for filename, info in file_changes.items():
+                    st.markdown(f"- **{filename}**: {info['type']}")
+            
+            if file_stats:
+                st.markdown("**Statistics:**")
+                st.code(file_stats, language="text")
+            
+            recent_commits = git_helper.get_recent_commits_context()
+            if recent_commits:
+                st.markdown("**Recent Commits (for context):**")
+                st.code(recent_commits, language="text")
 
 if __name__ == "__main__":
     main()
