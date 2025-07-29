@@ -1,71 +1,126 @@
-# gitt - A CLI for Better Commit Messages
+# gitt - A CLI for Better Commit Messages with AI Support
 
-`gitt` is a command-line interface (CLI) tool that helps you write better commit messages by providing a structured way to select commit types and enter commit messages.
+`gitt` is a command-line interface (CLI) tool that helps you write better commit messages by providing a structured workflow, integrating AI for message generation, and offering a user-friendly interactive experience.
 
 ## Features
 
-- Select commit types from a predefined list.
-- Choose specific files to add to the commit or add all changes.
-- Format commit messages automatically based on the selected type.
+* Interactive file selection with `fzf`
+* Choose commit types from a predefined list
+* Automatically format commit messages based on selected type
+* Generate commit messages using **Cloudflare AI**
+* Edit AI-generated messages before finalizing
+* Confirm commit before execution
+* Optional GUI support (via Streamlit, coming soon)
 
 ## Prerequisites
 
-Before installing `gitt`, ensure you have the following dependencies installed:
+Make sure you have the following dependencies installed:
 
-- [Git](https://git-scm.com/)
-- [fzf](https://github.com/junegunn/fzf)
+* [Git](https://git-scm.com/)
+* [fzf](https://github.com/junegunn/fzf)
+* [jq](https://stedolan.github.io/jq/) – required for AI message generation
+* [curl](https://curl.se/) – used to call Cloudflare AI APIs
 
 ## Installation
 
-To install `gitt`, follow these steps:
+1. Clone the repository:
 
-1. Clone the repository.
-2. Run the installation script:
+   ```bash
+   git clone https://github.com/your-username/gitt.git
+   cd gitt
+   ```
+
+2. Install the CLI globally:
 
    ```bash
    chmod +x install.sh
    ./install.sh
    ```
 
-   This will install `gitt` to `/usr/local/bin/`.
+   This will copy the `gitt` script to `/usr/local/bin/`.
+
+## Configuration
+
+To enable AI commit message generation via [Cloudflare AI](https://developers.cloudflare.com/workers-ai/), you must configure your API credentials:
+
+```bash
+gitt --config-api
+```
+
+You will be prompted to enter your:
+
+* `CLOUDFLARE_API_TOKEN`
+* `CLOUDFLARE_ACCOUNT_ID`
+
+These will be stored securely in `~/.config/gitt/.env`.
 
 ## Usage
 
-To use `gitt`, simply run the following command in your terminal:
+### CLI Mode
+
+Run the following command in a Git repository:
 
 ```bash
 gitt
 ```
 
-Follow the prompts to select files, choose a commit type, and enter your commit message.
+Workflow:
+
+1. Select files to stage (or `[ALL]`).
+2. Choose a commit type.
+3. Choose whether to use AI to generate the commit message.
+4. If AI is used:
+
+   * AI suggests a short message.
+   * You can **edit** the suggestion or accept it as-is.
+5. Review the final commit message.
+6. Confirm to execute the commit.
+
+### GUI Mode (coming soon)
+
+```bash
+gitt --gui
+```
 
 ## Commit Types
 
-| Commit Type | Description                                                        |
-|-------------|--------------------------------------------------------------------|
-| no type     | No specific type selected; use when the change is minor or unclear.|
-| feat        | A new feature                                                      |
-| fix         | A bug fix                                                          |
-| chore       | Routine tasks and maintenance                                      |
-| refactor    | Code changes that do not affect functionality                      |
-| docs        | Documentation changes                                              |
-| style       | Formatting changes (no code change)                                |
-| test        | Adding or updating tests                                           |
-| perf        | Performance improvements                                           |
-| ci          | Changes related to continuous integration                          |
-| build       | Changes related to the build process                               |
-| revert      | Reverting previous changes                                         |
+| Type     | Description                                             |
+| -------- | ------------------------------------------------------- |
+| no type  | No specific type selected; for minor or unclear changes |
+| feat     | A new feature                                           |
+| fix      | A bug fix                                               |
+| chore    | Routine tasks and maintenance                           |
+| refactor | Code refactoring without functional change              |
+| docs     | Documentation updates                                   |
+| style    | Code formatting changes (whitespace, etc.)              |
+| test     | Adding or modifying tests                               |
+| perf     | Performance improvements                                |
+| ci       | Continuous integration changes                          |
+| build    | Build system or dependency changes                      |
+| revert   | Reverting a previous commit                             |
 
-This table clearly explains each commit type and its purpose.
+## Example
+
+```bash
+$ gitt
+📁 Select files to stage → fzf interface opens
+🔧 Select commit type → e.g., "feat"
+🤖 Use AI to generate commit message? [Y/n] → Y
+💡 Suggested: Add pagination to product listing
+📝 You can now edit the message:
+> Add pagination to product listing
+✅ Final commit message: [feat] Add pagination to product listing
+✔️ Commit created successfully!
+```
 
 ## Acknowledgments
 
-This project was inspired by the work of [Sina Bayandorian](https://github.com/sina-byn/gitt), whose project `gitt` provided valuable insights into creating a CLI for better commit messages.
+Inspired by [Sina Bayandorian's](https://github.com/sina-byn/gitt) original `gitt` project, with added AI integration and usability improvements.
 
 ## Contributing
 
-Contributions are welcome! If you have suggestions for improvements or new features, feel free to open an issue or submit a pull request.
+Feel free to fork, improve, or suggest features via pull requests or issues.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+Licensed under the MIT License. See the [LICENSE](LICENSE) file for more information.
